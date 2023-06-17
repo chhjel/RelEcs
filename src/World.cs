@@ -1,5 +1,7 @@
+using RelEcs.Abstractions;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 
 namespace RelEcs
@@ -14,6 +16,9 @@ namespace RelEcs
         readonly Archetypes _archetypes = new();
 
         readonly TriggerLifeTimeSystem _triggerLifeTimeSystem = new();
+        readonly Dictionary<Type, Func<Type, IComponentRemovedAutoTrigger>> _componentRemovedAutoTriggers = new();
+        readonly Dictionary<Type, Func<Type, IComponentAddedAutoTrigger>> _componentAddedAutoTriggers = new();
+        readonly Dictionary<Type, Action<object>> _sendMethodCache = new();
 
         public WorldInfo Info => _worldInfo;
 
@@ -89,6 +94,13 @@ namespace RelEcs
         {
             var type = StorageType.Create<T>(Identity.None);
             _archetypes.AddComponent(type, entity.Identity, new T());
+            
+            if (_componentAddedAutoTriggers.ContainsKey(typeof(T)))
+            {
+                var trigger = _componentAddedAutoTriggers[typeof(T)](typeof(T));
+                trigger.Entity = entity;
+                SendObj(trigger);
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -96,6 +108,13 @@ namespace RelEcs
         {
             var type = StorageType.Create<T>(Identity.None);
             _archetypes.AddComponent(type, entity.Identity, component);
+            
+            if (_componentAddedAutoTriggers.ContainsKey(typeof(T)))
+            {
+                var trigger = _componentAddedAutoTriggers[typeof(T)](typeof(T));
+                trigger.Entity = entity;
+                SendObj(trigger);
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -103,7 +122,28 @@ namespace RelEcs
         {
             var type = StorageType.Create<T>(Identity.None);
             _archetypes.RemoveComponent(type, entity.Identity);
+
+            if (_componentRemovedAutoTriggers.ContainsKey(typeof(T)))
+            {
+                var trigger = _componentRemovedAutoTriggers[typeof(T)](typeof(T));
+                trigger.Entity = entity;
+                SendObj(trigger);
+            }
         }
+
+        public void RegisterComponentAddedAutoTrigger<TComponent, TTrigger>()
+            where TTrigger : class, IComponentAddedAutoTrigger, new()
+            => _componentAddedAutoTriggers[typeof(TComponent)] = (componentType) => new TTrigger();
+
+        public void RegisterComponentAddedAutoTrigger<TComponent>(Func<Type, IComponentAddedAutoTrigger> triggerFactory)
+            => _componentAddedAutoTriggers[typeof(TComponent)] = triggerFactory;
+
+        public void RegisterComponentRemovedAutoTrigger<TComponent, TTrigger>()
+            where TTrigger : class, IComponentRemovedAutoTrigger, new()
+            => _componentRemovedAutoTriggers[typeof(TComponent)] = (componentType) => new TTrigger();
+
+        public void RegisterComponentRemovedAutoTrigger<TComponent>(Func<Type, IComponentRemovedAutoTrigger> triggerFactory)
+            => _componentRemovedAutoTriggers[typeof(TComponent)] = triggerFactory;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public IEnumerable<(StorageType, object?)> GetComponents(Entity entity)
@@ -235,6 +275,26 @@ namespace RelEcs
         {
             var type = StorageType.Create<T>(Identity.None);
             _archetypes.RemoveComponent(type, _world.Identity);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SendObj(object trigger)
+        {
+            if (trigger is null) throw new Exception("trigger cannot be null");
+
+            var triggerType = trigger.GetType();
+            if (!_sendMethodCache.ContainsKey(triggerType))
+            {
+                var method = GetType()
+                    .GetMethods()
+                    .First(x => x.Name == nameof(Send) && x.IsGenericMethod && x.GetParameters().Length == 1);
+                var genericMethod = method.MakeGenericMethod(triggerType);
+
+                void invokable(object t) => genericMethod.Invoke(this, new object[] { t });
+                _sendMethodCache[triggerType] = invokable;
+            }
+
+            _sendMethodCache[triggerType](trigger);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
