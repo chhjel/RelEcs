@@ -19,6 +19,7 @@ namespace RelEcs
         readonly Dictionary<Type, Func<Type, IComponentRemovedAutoTrigger>> _componentRemovedAutoTriggers = new();
         readonly Dictionary<Type, Func<Type, IComponentAddedAutoTrigger>> _componentAddedAutoTriggers = new();
         readonly Dictionary<Type, Action<object>> _sendMethodCache = new();
+        readonly Dictionary<Type, Func<Type, StorageType>> _storageTypeCache = new();
 
         public WorldInfo Info => _worldInfo;
 
@@ -83,6 +84,21 @@ namespace RelEcs
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool HasComponent(Entity entity, Type componentType)
+        {
+            if (!_storageTypeCache.ContainsKey(componentType))
+            {
+                var method = typeof(StorageType).GetMethod(nameof(StorageType.Create),
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public);
+                var genericMethod = method?.MakeGenericMethod(componentType);
+                _storageTypeCache[componentType] = (t) => (StorageType)genericMethod!.Invoke(null, new object[] { Identity.None })!;
+            }
+
+            var type = _storageTypeCache[componentType](componentType);
+            return _archetypes.HasComponent(type, entity.Identity);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool HasComponent<T>(Entity entity) where T : class
         {
             var type = StorageType.Create<T>(Identity.None);
@@ -120,13 +136,18 @@ namespace RelEcs
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void RemoveComponent<T>(Entity entity) where T : class
         {
+            var autoTrigger = _componentRemovedAutoTriggers.ContainsKey(typeof(T));
+            T? comp = null;
+            if (autoTrigger) comp = GetComponent<T>(entity);
+
             var type = StorageType.Create<T>(Identity.None);
             _archetypes.RemoveComponent(type, entity.Identity);
 
-            if (_componentRemovedAutoTriggers.ContainsKey(typeof(T)))
+            if (autoTrigger)
             {
                 var trigger = _componentRemovedAutoTriggers[typeof(T)](typeof(T));
                 trigger.Entity = entity;
+                trigger.Component = comp;
                 SendObj(trigger);
             }
         }
