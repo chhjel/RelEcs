@@ -70,6 +70,20 @@ namespace RelEcs
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool TryGetComponent(Entity entity, Type componentType, out object? component)
+        {
+            var type = GetStorageKeyCached(componentType);
+            if (!HasComponent(entity, componentType))
+            {
+                component = null;
+                return false;
+            }
+
+            component = _archetypes.GetComponent(type, entity.Identity);
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryGetComponent<T>(Entity entity, out T? component) where T : class
         {
             var type = StorageType.Create<T>(Identity.None);
@@ -86,6 +100,13 @@ namespace RelEcs
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool HasComponent(Entity entity, Type componentType)
         {
+            var type = GetStorageKeyCached(componentType);
+            return _archetypes.HasComponent(type, entity.Identity);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private StorageType GetStorageKeyCached(Type componentType)
+        {
             if (!_storageTypeCache.ContainsKey(componentType))
             {
                 var method = typeof(StorageType).GetMethod(nameof(StorageType.Create),
@@ -93,9 +114,7 @@ namespace RelEcs
                 var genericMethod = method?.MakeGenericMethod(componentType);
                 _storageTypeCache[componentType] = (t) => (StorageType)genericMethod!.Invoke(null, new object[] { Identity.None })!;
             }
-
-            var type = _storageTypeCache[componentType](componentType);
-            return _archetypes.HasComponent(type, entity.Identity);
+            return _storageTypeCache[componentType](componentType);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
