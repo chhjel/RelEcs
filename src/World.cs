@@ -171,6 +171,19 @@ namespace RelEcs
             }
         }
 
+        private static readonly Dictionary<Type, Action<World, Entity>> _removeComponentsMethods = new();
+        public void RemoveComponent(Entity entity, Type componentType)
+        {
+            if (!_removeComponentsMethods.ContainsKey(componentType))
+            {
+                var method = GetType().GetMethods().First(x => x.Name == nameof(World.RemoveComponent) && x.IsGenericMethod && x.GetParameters().Length == 1);
+                var genericMethod = method!.MakeGenericMethod(componentType);
+                _removeComponentsMethods[componentType] = (w, e) => genericMethod.Invoke(w, new object[] { e });
+            }
+
+            _removeComponentsMethods[componentType](this, entity);
+        }
+
         public void RegisterComponentAddedAutoTrigger<TComponent, TTrigger>()
             where TTrigger : class, IComponentAddedAutoTrigger, new()
             => _componentAddedAutoTriggers[typeof(TComponent)] = (componentType) => new TTrigger();
